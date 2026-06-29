@@ -1,3 +1,5 @@
 .env*
 docs/
 temp_files/
+chroma_db/
+**/__pycache__/

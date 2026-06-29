@@ -13,6 +13,7 @@ assistant = EnterpriseKnowledgeAssistant()
 # Define the exact incoming request schema from the assignment PDF
 class QueryRequest(BaseModel):
     question: str
+    history: list[dict] = []
 
 # Define the outgoing response schema (matching our Pydantic assistant model)
 class QueryResponse(AnswerResponse):
@@ -29,7 +30,7 @@ async def ask_question(payload: QueryRequest):
             raise HTTPException(status_code=400, detail="Question cannot be empty.")
         
         # Run our RAG pipeline
-        result = assistant.ask(payload.question)
+        result = assistant.ask(payload.question, payload.history)
         return result
 
     except Exception as e:

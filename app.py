@@ -20,7 +20,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         
         # If the message is from the assistant, also draw the source expander
-        if message["role"] == "assistant" and "sources" in message:
+        if message["role"] == "assistant" and len(message.get("sources", [])) > 0:
             with st.expander(f"🔍 View Sources (Confidence: {message['confidence']})"):
                 for idx, source in enumerate(message["sources"]):
                     st.write(f"{idx + 1}. **{source['document']}** (Page {source['page']})")
@@ -28,21 +28,23 @@ for message in st.session_state.messages:
 # --- Chat Input & API Interaction ---
 if prompt := st.chat_input("e.g., What is the employee leave policy?"):
     
-    # 1. Display and save the user's question
     st.chat_message("user").markdown(prompt)
+    
+    # Pack history logs natively into backend request
+    payload = {"question": prompt, "history": st.session_state.messages}
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # 2. Display the assistant's response container
     with st.chat_message("assistant"):
-        with st.spinner("Searching the enterprise vault..."):
+        with st.spinner("....Thinking..."):
             try:
                 # Call your FastAPI backend
-                response = requests.post(API_URL, json={"question": prompt})
+                response = requests.post(API_URL, json=payload)
                 response.raise_for_status() # Catch HTTP errors (e.g., 500 or 404)
                 
                 # Parse the JSON response
                 data = response.json()
-                answer = data.get("answer", "Information unavailable.")
+                answer = data.get("answer", "Something went wrong. Please try again.")
                 sources = data.get("sources", [])
                 confidence = data.get("confidence", 0.0)
 

@@ -1,102 +1,89 @@
-import os
 import json
-from typing import Literal
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever    ## Note: Import for EnsembleRetriever moved from langchain_community.retrievers to langchain_classic.retrievers 
+from sentence_transformers import CrossEncoder
 
-
+from schemas import AnswerResponse, RouteDecision
+from prompts import CONDENSE_PROMPT, ROUTER_PROMPT, RAG_PROMPT
+    
 # Load API keys from .env
 load_dotenv()
 
-# --- 1. Define the Strict JSON Schema ---
-class Source(BaseModel):
-    document: str = Field(description="The name of the source document")
-    page: int = Field(description="The page number where the information was found")
-
-class AnswerResponse(BaseModel):
-    answer: str = Field(description="The concise answer to the user's question. If not found in context, output exactly 'Information unavailable'.")
-    sources: list[Source] = Field(description="List of exact sources used to answer the question, extracted from the context.")
-    confidence: float = Field(description="Confidence score of the answer between 0.0 and 1.0")
-
-class RouteDecision(BaseModel):
-    route: Literal["casual", "search", "ambiguous"] = Field(
-        description="Classify the intent: 'casual' for greetings, 'search' for clear queries about company data, 'ambiguous' if the query lacks specific context to search effectively."
-    )
-    reply: str = Field(
-        description="If route is 'casual', put the friendly reply here. If 'ambiguous', put a clarifying question here (e.g., 'Are you looking for HR or IT policies?'). If 'search', leave empty."
-    )
-
 # --- 2. Build the Generation Engine ---
 class EnterpriseKnowledgeAssistant:
-    def __init__(self, persist_directory="./chroma_db"):
-        """Connects to the existing database and initializes the LLM."""
+    def __init__(self, persist_directory="./chroma_db", raw_docs=None):
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        
-        # Connect to the local database you just built
         self.vector_store = Chroma(
             persist_directory=persist_directory,
             embedding_function=self.embeddings
         )
         
-        # Initialize the LLM and bind it to our strict Pydantic schema
+        # Retrieval Setup
+        self.vector_retriever = self.vector_store.as_retriever(search_kwargs={"k": 10})
+        if raw_docs:
+            self.keyword_retriever = BM25Retriever.from_documents(raw_docs)
+            self.keyword_retriever.k = 10
+            self.hybrid_retriever = EnsembleRetriever(
+                retrievers=[self.vector_retriever, self.keyword_retriever],
+                weights=[0.5, 0.5]
+            )
+        else:
+            self.hybrid_retriever = self.vector_retriever
+            
+        # Re-ranking and LLM Setup
+        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
-        # llm to generate answers based on retrieved context
+        self.condense_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self.rag_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structured_output(AnswerResponse)
+        self.router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structured_output(RouteDecision)
         
-        # llm to decide if the user query requires a search or is just casual conversation
-        self.router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3).with_structured_output(RouteDecision)
-
-    def ask(self, question: str) -> dict:
-        """Evaluates intent, routes the query, and generates a structured answer."""
+    def ask(self, question: str, history: list[dict] = None) -> dict:
+        history = history or []
+        standalone_question = question
         
-        # ------------- STEP A: The Router ---------------
-        router_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the intelligent routing brain of an Enterprise Knowledge Assistant. 
-                       Classify the user's input into one of three categories:
-                       1. 'casual': Greetings, thanks, or casual conversation. Provide a friendly 'reply'.
-                       2. 'ambiguous': The question is unclear or lacks context. Provide a clarifying 'reply' to guide the user.
-                       3. 'search': A clear question to perform a search. Leave 'reply' empty."""),
-            ("user", "{question}")
-        ])
+        # STEP 1: Coreference Shorthand Correction (Memory Processing)
+        if history:
+            history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+            standalone_question = (CONDENSE_PROMPT | self.condense_llm).invoke(
+                {"history": history_text, "question": question}
+            ).content
+
+        # STEP 2: Intent Classification Routing
+        decision = (ROUTER_PROMPT | self.router_llm).invoke({"question": standalone_question})
         
-        router_chain = router_prompt | self.router_llm
-        decision = router_chain.invoke({"question": question})
-
-        # ------------- STEP B: Handle Casual/Ambiguous Requests -------------
-
         if decision.route in ["casual", "ambiguous"]:
-            # Return the conversational/clarifying response directly
-            return {
-                "answer": decision.reply,
-                "sources": [],
-                "confidence": 1.0 
-            }
-
-        #  ------------- STEP C: The RAG Pipeline -------------
+            return {"answer": decision.reply, "sources": [], "confidence": 1.0}
+            
+        # STEP 3: Metadata Target Extraction Filter (Gathers up to 15 nodes)
+        search_kwargs = {"k": 15}
+        if decision.category_filter != "ALL":
+            search_kwargs["filter"] = {"category": decision.category_filter}
+            
+        initial_docs = self.vector_store.similarity_search(standalone_question, **search_kwargs)
         
-        # A. Retrieve the top 3 most relevant chunks from ChromaDB
-        docs = self.vector_store.similarity_search(question, k=3)
+        if not initial_docs:
+            # Bypass Re-ranking and pass an empty context to the LLM
+            context_text = "No documents found."
         
-        # B. Format the chunks into a readable context block, injecting the metadata
-        context_text = "\n\n".join(
-            [f"Source: {doc.metadata.get('source')} (Page {doc.metadata.get('page')})\nContent: {doc.page_content}" 
-             for doc in docs]
-        )
+        else:
+            # STEP C: Re-ranking
+            doc_texts = [doc.page_content for doc in initial_docs]
+            pairs = [[question, text] for text in doc_texts]
+            scores = self.cross_encoder.predict(pairs)
+            
+            scored_docs = sorted(list(zip(initial_docs, scores)), key=lambda x: x[1], reverse=True)
+            best_docs = [doc for doc, score in scored_docs[:3]]
+            
+            # STEP D: Generation
+            context_text = "\n\n".join(
+                [f"Source: {doc.metadata.get('source')} (Page {doc.metadata.get('page')})\nContent: {doc.page_content}" 
+                for doc in best_docs]
+            )
         
-        # C. The Guardrail Prompt (Crucial for the evaluation criteria)
-        rag_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an Enterprise Knowledge Assistant. Answer the user's question ONLY using the provided Context, converse with them and be polite at all times.\nIf the Context does not contain the answer, your answer MUST be 'Information unavailable'.\nNever make up facts through assumptions or partial awareness. Extract the correct source document and page number strictly from the Context provided."),
-            ("user", "Context:\n{context}\n\nQuestion: {question}")
-        ])
-        
-        # D. Execute the pipeline
-        rag_chain = rag_prompt | self.rag_llm
-        response_obj = rag_chain.invoke({"context": context_text, "question": question})
-        
-        # Return as a standard Python dictionary for easy API integration later
+        response_obj = (RAG_PROMPT | self.rag_llm).invoke({"context": context_text, "question": question})
         return response_obj.model_dump()
 
 # Example Usage:
