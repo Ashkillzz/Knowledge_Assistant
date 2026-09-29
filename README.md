@@ -1,4 +1,4 @@
-# 🏢 Corporate Knowledge Assistant (Advanced RAG Pipeline)
+# 🏢 Corporate Knowledge Assistant (RAG Pipeline)
 
 An Organisation-grade Retrieval-Augmented Generation (RAG) system built to securely and intelligently query company documents (HR policies, Manuals, Techincal guides, Product documentation etc).  
 
