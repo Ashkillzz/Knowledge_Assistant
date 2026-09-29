@@ -1,6 +1,6 @@
-# 🏢 Enterprise Knowledge Assistant (Advanced RAG Pipeline)
+# 🏢 Corporate Knowledge Assistant (Advanced RAG Pipeline)
 
-An enterprise-grade Retrieval-Augmented Generation (RAG) system built to securely and intelligently query company documents (HR policies, Manuals, Techincal guides, Product documentation etc).  
+An Organisation-grade Retrieval-Augmented Generation (RAG) system built to securely and intelligently query company documents (HR policies, Manuals, Techincal guides, Product documentation etc).  
 
 This project tackles real-world edge cases: conversational memory loss, duplicate document ingestion, hallucinations(partially enforced), and retrieval precision across acronyms. It features a decoupled architecture using FastAPI for the backend and Streamlit for the frontend.
 
