@@ -3,3 +3,12 @@ docs/
 temp_files/
 chroma_db/
 **/__pycache__/
+Aswin_Project.mp4
+.venv
+
+current_architecture_writeup.md
+enterprise_rag_architecture_plan.md
+Ingested_Docs
+
+rag_architecture_and_metrics.md
+rag_assistant_test_report.md
