@@ -1,6 +1,6 @@
-# 🏢 Enterprise Knowledge Assistant
+# 🏢 Corporate Knowledge Assistant
 
-A production-ready Retrieval-Augmented Generation (RAG) system built to query enterprise documents (PDFs, Word documents, Excel sheets, and Presentations). 
+A production-ready Retrieval-Augmented Generation (RAG) system built to query corporate documents (PDFs, Word documents, Excel sheets, and Presentations). 
 
 The system features a decoupled architecture with a **FastAPI** backend and an interactive **Streamlit** frontend, combining hybrid search (Dense Vector + Sparse BM25), Cross-Encoder reranking, and an autonomous **LangGraph ReAct agent**.
 
@@ -59,7 +59,7 @@ The system features a decoupled architecture with a **FastAPI** backend and an i
 ├── DB_visualizer.py         # 3D vector database visualizer (ChromaViz)
 ├── requirements.txt         # Project dependencies
 ├── docs/                    # Default folder for local document ingestion
-├── Ingested_Docs/           # Indexed enterprise reference documents
+├── Ingested_Docs/           # Indexed corporate reference documents
 ├── chroma_db/               # Persistent ChromaDB storage directory
 └── temp_files/              # Staging directory for API/UI file uploads
 ```
